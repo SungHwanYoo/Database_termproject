@@ -1,0 +1,101 @@
+CREATE DATABASE IF NOT EXISTS coupangeats;
+USE coupangeats;
+
+-- Restaurants Table
+CREATE TABLE restaurants (
+    id INT AUTO_INCREMENT PRIMARY KEY, -- AUTO_INCREMENT 추가
+    name VARCHAR(255) NOT NULL,
+    address VARCHAR(255) NOT NULL,
+    latitude DECIMAL(10, 8) NOT NULL, -- 위도와 경도를 실제 범위에 맞게 수정
+    longitude DECIMAL(11, 8) NOT NULL,
+    category VARCHAR(50) NOT NULL,
+    min_order_amount INT NOT NULL,
+    cook_time INT NOT NULL,
+    three_km_fee DECIMAL(10, 2),
+    five_km_fee DECIMAL(10, 2),
+    ten_km_fee DECIMAL(10, 2),
+    over_ten_km_fee DECIMAL(10, 2)
+);
+
+-- Menus Table
+CREATE TABLE menus (
+    menu_id INT AUTO_INCREMENT PRIMARY KEY,
+    restaurant_id INT NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    price DECIMAL(10, 2) NOT NULL,
+    description VARCHAR(255),
+    FOREIGN KEY (restaurant_id) REFERENCES restaurants(id) ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+-- Users Table
+CREATE TABLE users (
+    user_id INT AUTO_INCREMENT PRIMARY KEY,
+    username VARCHAR(50) NOT NULL,
+    address VARCHAR(255),
+    latitude DECIMAL(10, 8),
+    longitude DECIMAL(11, 8),
+    email VARCHAR(100) NOT NULL UNIQUE,
+    phone_number VARCHAR(20),
+    is_wow_member BOOLEAN NOT NULL DEFAULT FALSE, -- 기본값 설정
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Restaurant Images Table
+CREATE TABLE restaurant_images (
+    image_id INT AUTO_INCREMENT PRIMARY KEY,
+    restaurant_id INT NOT NULL,
+    image_url VARCHAR(255) NOT NULL,
+    description VARCHAR(255),
+    uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (restaurant_id) REFERENCES restaurants(id) ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+-- Orders Table
+CREATE TABLE orders (
+    order_id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    restaurant_id INT NOT NULL,
+    order_status ENUM('Pending', 'In Progress', 'Completed') NOT NULL, -- 상태를 ENUM으로 제한
+    order_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY (restaurant_id) REFERENCES restaurants(id) ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+-- Order Items Table
+CREATE TABLE order_items (
+    order_item_id INT AUTO_INCREMENT PRIMARY KEY,
+    order_id INT NOT NULL,
+    menu_id INT NOT NULL,
+    quantity INT NOT NULL CHECK (quantity > 0), -- 유효성 검사 추가
+    FOREIGN KEY (order_id) REFERENCES orders(order_id) ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY (menu_id) REFERENCES menus(menu_id) ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+-- Reviews Table
+CREATE TABLE reviews (
+    review_id INT AUTO_INCREMENT PRIMARY KEY,
+    restaurant_id INT NOT NULL,
+    user_id INT NOT NULL,
+    rating DECIMAL(2, 1) CHECK (rating BETWEEN 1 AND 5),
+    content VARCHAR(255) NOT NULL,
+    review_image_url VARCHAR(255) DEFAULT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (restaurant_id) REFERENCES restaurants(id) 
+        ON DELETE CASCADE 
+        ON UPDATE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(user_id) 
+        ON DELETE CASCADE 
+        ON UPDATE CASCADE
+);
+
+
+-- Wow Promotions Table
+CREATE TABLE wow_promotions (
+    restaurant_id INT PRIMARY KEY,
+    discount_amount DECIMAL(10, 2),
+    special_event VARCHAR(255),
+    event_description VARCHAR(255),
+    valid_until DATE DEFAULT (CURRENT_DATE + INTERVAL 1 DAY),
+    FOREIGN KEY (restaurant_id) REFERENCES restaurants(id) 
+    ON DELETE CASCADE ON UPDATE CASCADE
+);

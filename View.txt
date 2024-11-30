@@ -1,0 +1,193 @@
+CREATE VIEW promotions_view AS
+SELECT 
+    wp.restaurant_id,
+    r.name AS restaurant_name,
+    wp.discount_amount,
+    wp.special_event,
+    wp.event_description,
+    wp.valid_until,
+    CASE 
+        WHEN wp.discount_amount = 'NULL' THEN '배달비 무료'
+        ELSE CONCAT('배달비 무료 + ', wp.discount_amount, '원 할인')
+    END AS promotion_description
+FROM 
+    wow_promotions wp
+JOIN 
+    restaurants r ON wp.restaurant_id = r.id
+WHERE 
+    wp.valid_until >= CURDATE();
+
+-- Displays order details and calculations
+CREATE VIEW orders_view AS
+WITH distance_calc AS (
+    SELECT 
+        o.order_id,
+        ROUND(
+            ST_Distance_Sphere(
+                POINT(r.longitude, r.latitude),
+                POINT(u.longitude, u.latitude)
+            ) / 1000, 2) AS distance
+    FROM 
+        orders o
+        JOIN users u ON o.user_id = u.user_id
+        JOIN restaurants r ON o.restaurant_id = r.id
+)
+SELECT 
+    o.order_id,
+    o.user_id,
+    r.name AS restaurant_name,
+    u.address,
+    GROUP_CONCAT(
+        CONCAT(
+            m.name,' ', 
+            oi.quantity, '개 ',
+            FORMAT(oi.quantity * m.price, 0), '원'
+        ) 
+        SEPARATOR ', '
+    ) AS order_items,
+    SUM(oi.quantity * m.price) AS subtotal,
+    CASE 
+        WHEN d.distance <= 3 THEN r.three_km_fee
+        WHEN d.distance <= 5 THEN r.five_km_fee
+        WHEN d.distance <= 10 THEN r.ten_km_fee
+        ELSE r.over_ten_km_fee
+    END AS delivery_fee,
+    CASE 
+        WHEN u.is_wow_member = TRUE THEN 
+            CASE 
+                WHEN d.distance <= 3 THEN r.three_km_fee
+                WHEN d.distance <= 5 THEN r.five_km_fee
+                WHEN d.distance <= 10 THEN r.ten_km_fee
+                ELSE r.over_ten_km_fee
+            END
+        ELSE 0
+    END AS wow_delivery_discount,
+    CASE 
+        WHEN u.is_wow_member = TRUE AND wp.discount_amount IS NOT NULL 
+        THEN wp.discount_amount
+        ELSE 0
+    END AS wow_promotion_discount,
+    CASE 
+        WHEN u.is_wow_member = TRUE THEN 
+            CASE 
+                WHEN d.distance <= 3 THEN r.three_km_fee
+                WHEN d.distance <= 5 THEN r.five_km_fee
+                WHEN d.distance <= 10 THEN r.ten_km_fee
+                ELSE r.over_ten_km_fee
+            END
+        ELSE 0
+    END + 
+    CASE 
+        WHEN u.is_wow_member = TRUE AND wp.discount_amount IS NOT NULL 
+        THEN wp.discount_amount
+        ELSE 0
+    END AS total_wow_discount,
+    SUM(oi.quantity * m.price) + 
+    CASE 
+        WHEN u.is_wow_member = TRUE THEN 0
+        ELSE 
+            CASE 
+                WHEN d.distance <= 3 THEN r.three_km_fee
+                WHEN d.distance <= 5 THEN r.five_km_fee
+                WHEN d.distance <= 10 THEN r.ten_km_fee
+                ELSE r.over_ten_km_fee
+            END
+    END - 
+    CASE 
+        WHEN u.is_wow_member = TRUE AND wp.discount_amount IS NOT NULL 
+        THEN wp.discount_amount
+        ELSE 0
+    END AS final_amount,
+    o.order_status,
+    o.order_time
+FROM 
+    orders o
+JOIN 
+    restaurants r ON o.restaurant_id = r.id
+JOIN 
+    order_items oi ON o.order_id = oi.order_id
+JOIN 
+    menus m ON oi.menu_id = m.menu_id
+JOIN 
+    users u ON o.user_id = u.user_id
+LEFT JOIN 
+    wow_promotions wp ON r.id = wp.restaurant_id AND wp.valid_until >= o.order_time
+JOIN 
+    distance_calc d ON o.order_id = d.order_id
+GROUP BY 
+    o.order_id;
+
+-- Shows user statistics and savings
+CREATE VIEW users_view AS
+SELECT 
+    u.user_id,
+    u.username,
+    u.email,
+    u.is_wow_member,
+    u.address
+    COUNT(o.order_id) AS total_orders,
+    COUNT(CASE WHEN o.order_status IN ('Pending', 'In Progress') THEN 1 END) AS active_orders,
+    COALESCE(SUM(ov.final_amount), 0) AS total_spent,
+    COALESCE(
+        CASE 
+            WHEN u.is_wow_member = TRUE THEN 
+                COALESCE(SUM(ov.total_wow_discount), 0) + 
+                COALESCE(SUM(CASE 
+                    WHEN wp.discount_amount IS NOT NULL THEN wp.discount_amount 
+                    ELSE 0 
+                END), 0)
+            ELSE 0 
+        END
+    , 0) AS total_savings
+FROM 
+    users u
+LEFT JOIN 
+    orders o ON u.user_id = o.user_id
+LEFT JOIN 
+    orders_view ov ON o.order_id = ov.order_id
+LEFT JOIN 
+    wow_promotions wp ON o.restaurant_id = wp.restaurant_id 
+    AND wp.valid_until >= o.order_time
+GROUP BY 
+    u.user_id, u.username, u.email, u.is_wow_member;
+
+-- Shows restaurant performance metrics
+CREATE VIEW restaurant_stats_view AS
+SELECT 
+    r.id AS restaurant_id,
+    r.name AS restaurant_name,
+    COUNT(o.order_id) AS total_orders,
+    COALESCE(SUM(ov.final_amount), 0) AS total_revenue,
+    COALESCE(AVG(ov.final_amount), 0) AS avg_order_amount
+FROM 
+    restaurants r
+LEFT JOIN 
+    orders o ON r.id = o.restaurant_id
+LEFT JOIN 
+    orders_view ov ON o.order_id = ov.order_id
+GROUP BY 
+    r.id, r.name
+ORDER BY 
+    total_orders DESC;
+
+-- Shows menu performance analysis
+CREATE VIEW menu_analytics_view AS
+SELECT 
+    m.name AS menu_name,
+    r.name AS restaurant_name,
+    r.category,
+    m.price,
+    COUNT(oi.order_item_id) AS total_orders,
+    AVG(rv.rating) AS avg_rating
+FROM 
+    menus m
+JOIN 
+    restaurants r ON m.restaurant_id = r.id
+LEFT JOIN 
+    order_items oi ON m.menu_id = oi.menu_id
+LEFT JOIN 
+    reviews rv ON r.id = rv.restaurant_id
+GROUP BY 
+    m.menu_id
+ORDER BY 
+    total_orders DESC;
